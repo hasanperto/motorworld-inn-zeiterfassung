@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 interface User {
-  id: number;
+  id: string;
   name: string;
   email: string;
 }
@@ -11,8 +11,8 @@ interface AuthStore {
   token: string | null;
   user: User | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
-  register: (name: string, email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
 }
 
@@ -31,13 +31,14 @@ export const useAuthStore = create<AuthStore>()(
             body: JSON.stringify({ email, password }),
           });
           const data = await res.json();
+          
           if (res.ok) {
             set({ token: data.token, user: data.user, isAuthenticated: true });
-            return true;
+            return { success: true };
           }
-          return false;
-        } catch {
-          return false;
+          return { success: false, error: data.error || 'Login failed' };
+        } catch (err) {
+          return { success: false, error: 'Network error' };
         }
       },
       
@@ -49,17 +50,21 @@ export const useAuthStore = create<AuthStore>()(
             body: JSON.stringify({ name, email, password }),
           });
           const data = await res.json();
+          
           if (res.ok) {
             set({ token: data.token, user: data.user, isAuthenticated: true });
-            return true;
+            return { success: true };
           }
-          return false;
-        } catch {
-          return false;
+          return { success: false, error: data.error || 'Registration failed' };
+        } catch (err) {
+          return { success: false, error: 'Network error' };
         }
       },
       
-      logout: () => {
+      logout: async () => {
+        try {
+          await fetch('/api/logout', { method: 'POST' });
+        } catch {}
         set({ token: null, user: null, isAuthenticated: false });
       },
     }),
