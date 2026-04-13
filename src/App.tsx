@@ -136,7 +136,7 @@ export default function App() {
               >
                 <option value="">-- Auswählen --</option>
                 {employees.map(emp => (
-                  <option key={emp.id} value={emp.id}>
+                  <option key={emp.id} value={emp.id} style={{ fontWeight: emp.id === currentEmployeeId ? 'bold' : 'normal', color: emp.id === currentEmployeeId ? '#4ade80' : 'inherit' }}>
                     {emp.name} ({emp.position})
                   </option>
                 ))}

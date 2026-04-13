@@ -48,32 +48,23 @@ export default function Verlauf() {
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+  // Calculate worked minutes helper (handles overnight shifts)
+  const workedMinutesForShift = (s: typeof allShifts[0]) => {
+    const [startH, startM] = s.startTime.split(':').map(Number);
+    let [endH, endM] = (s.endTime || '00:00').split(':').map(Number);
+    let worked = (endH * 60 + endM) - (startH * 60 + startM) - s.pauseMinutes;
+    if (worked < 0) worked += 24 * 60;
+    return Math.max(0, worked);
+  };
+
   // Calculate totals
-  const totalMinutes = allShifts.reduce((acc, s) => {
-    // Calculate worked minutes from start/end time
-    const [startH, startM] = s.startTime.split(':').map(Number);
-    const [endH, endM] = (s.endTime || '00:00').split(':').map(Number);
-    const workedMinutes = (endH * 60 + endM) - (startH * 60 + startM) - s.pauseMinutes;
-    return acc + Math.max(0, workedMinutes);
-  }, 0);
+  const totalMinutes = allShifts.reduce((acc, s) => acc + workedMinutesForShift(s), 0);
 
-  const normalMinutes = allShifts.filter(s => s.type === 'normal').reduce((acc, s) => {
-    const [startH, startM] = s.startTime.split(':').map(Number);
-    const [endH, endM] = (s.endTime || '00:00').split(':').map(Number);
-    return acc + Math.max(0, (endH * 60 + endM) - (startH * 60 + startM) - s.pauseMinutes);
-  }, 0);
+  const normalMinutes = allShifts.filter(s => s.type === 'normal').reduce((acc, s) => acc + workedMinutesForShift(s), 0);
 
-  const nachtMinutes = allShifts.filter(s => s.type === 'nacht' || s.type === 'nacht+sonntag').reduce((acc, s) => {
-    const [startH, startM] = s.startTime.split(':').map(Number);
-    const [endH, endM] = (s.endTime || '00:00').split(':').map(Number);
-    return acc + Math.max(0, (endH * 60 + endM) - (startH * 60 + startM) - s.pauseMinutes);
-  }, 0);
+  const nachtMinutes = allShifts.filter(s => s.type === 'nacht' || s.type === 'nacht+sonntag').reduce((acc, s) => acc + workedMinutesForShift(s), 0);
 
-  const sonntagMinutes = allShifts.filter(s => s.type === 'sonntag' || s.type === 'nacht+sonntag').reduce((acc, s) => {
-    const [startH, startM] = s.startTime.split(':').map(Number);
-    const [endH, endM] = (s.endTime || '00:00').split(':').map(Number);
-    return acc + Math.max(0, (endH * 60 + endM) - (startH * 60 + startM) - s.pauseMinutes);
-  }, 0);
+  const sonntagMinutes = allShifts.filter(s => s.type === 'sonntag' || s.type === 'nacht+sonntag').reduce((acc, s) => acc + workedMinutesForShift(s), 0);
 
   const hourlyRate = currentEmployee.hourlyRate;
   const totalEarnings = calculateEarnings(normalMinutes, 'normal', hourlyRate) +
@@ -132,10 +123,8 @@ export default function Verlauf() {
         ) : (
           <div className="divide-y divide-border">
             {allShifts.map((shift) => {
-              const [startH, startM] = shift.startTime.split(':').map(Number);
-              const [endH, endM] = (shift.endTime || '00:00').split(':').map(Number);
-              const workedMinutes = (endH * 60 + endM) - (startH * 60 + startM) - shift.pauseMinutes;
-              const earnings = calculateEarnings(Math.max(0, workedMinutes), shift.type, hourlyRate);
+              const workedMinutes = workedMinutesForShift(shift);
+              const earnings = calculateEarnings(workedMinutes, shift.type, hourlyRate);
               
               return (
                 <div key={shift.id} className="p-4">

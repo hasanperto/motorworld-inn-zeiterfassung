@@ -164,23 +164,33 @@ export const useStore = create<Store>()(
             };
           }
           
-          const s = stats[shift.date];
-          const hourlyRate = emp.hourlyRate;
+          // Calculate worked minutes correctly from start/end time
+          const [startH, startM] = shift.startTime.split(':').map(Number);
+          let [endH, endM] = (shift.endTime || '00:00').split(':').map(Number);
           
-          if (shift.type === 'normal') {
-            s.normalMinutes += shift.pauseMinutes > 0 ? Math.max(0, shift.pauseMinutes) : 0;
-          } else if (shift.type === 'nacht') {
-            s.nachtMinutes += shift.pauseMinutes > 0 ? Math.max(0, shift.pauseMinutes) : 0;
-          } else if (shift.type === 'sonntag') {
-            s.sonntagMinutes += shift.pauseMinutes > 0 ? Math.max(0, shift.pauseMinutes) : 0;
-          } else {
-            s.nachtMinutes += shift.pauseMinutes > 0 ? Math.max(0, shift.pauseMinutes) : 0;
+          let workedMinutes = (endH * 60 + endM) - (startH * 60 + startM) - shift.pauseMinutes;
+          
+          // Handle overnight shifts (end time < start time means next day)
+          if (workedMinutes < 0) {
+            workedMinutes += 24 * 60;
           }
           
-          s.totalMinutes = s.normalMinutes + s.nachtMinutes + s.sonntagMinutes;
-          s.earnings = get().calculateEarnings(s.normalMinutes, 'normal', hourlyRate) +
-                      get().calculateEarnings(s.nachtMinutes, 'nacht', hourlyRate) +
-                      get().calculateEarnings(s.sonntagMinutes, 'sonntag', hourlyRate);
+          const hourlyRate = emp.hourlyRate;
+          const shiftEarnings = get().calculateEarnings(Math.max(0, workedMinutes), shift.type, hourlyRate);
+          
+          // Assign minutes to correct category based on SHIFT TYPE, not time
+          if (shift.type === 'normal') {
+            stats[shift.date].normalMinutes += Math.max(0, workedMinutes);
+          } else if (shift.type === 'nacht') {
+            stats[shift.date].nachtMinutes += Math.max(0, workedMinutes);
+          } else if (shift.type === 'sonntag') {
+            stats[shift.date].sonntagMinutes += Math.max(0, workedMinutes);
+          } else if (shift.type === 'nacht+sonntag') {
+            stats[shift.date].nachtMinutes += Math.max(0, workedMinutes);
+          }
+          
+          stats[shift.date].totalMinutes += Math.max(0, workedMinutes);
+          stats[shift.date].earnings += shiftEarnings;
         });
         
         return Object.values(stats);
