@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import Login from '../components/Login';
 import Register from '../components/Register';
+import { useAuthStore } from '../stores/useAuthStore';
 
 export default function AuthPage() {
   const [tab, setTab] = useState<'login' | 'register'>('login');
+  const enterDemoMode = useAuthStore((state) => state.enterDemoMode);
 
   return (
     <div className="min-h-dvh bg-bg flex flex-col">
@@ -43,6 +45,19 @@ export default function AuthPage() {
             ) : (
               <Register onSwitchToLogin={() => setTab('login')} />
             )}
+            
+            {/* Demo Mode Button */}
+            <div className="mt-6 p-4 bg-secondary rounded-xl border border-gray-700">
+              <button
+                onClick={() => enterDemoMode()}
+                className="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-xl transition-colors"
+              >
+                🎬 Demo Modu Görüntüle
+              </button>
+              <p className="text-xs text-gray-500 mt-2 text-center">
+                Kayıt olmadan uygulamayı deneyin
+              </p>
+            </div>
           </div>
         </div>
       </main>

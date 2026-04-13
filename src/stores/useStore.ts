@@ -1,6 +1,61 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import type { Employee, Shift, ActiveShift, DayStats, ShiftType } from '../types';
+import { useAuthStore } from './useAuthStore';
+
+// Demo employees with sample shifts
+export const DEMO_EMPLOYEES: Employee[] = [
+  {
+    id: '1',
+    name: 'Perto',
+    position: 'Spülküche',
+    team: 'B',
+    hourlyRate: 15,
+    shifts: [
+      {
+        id: 'demo-shift-1',
+        date: new Date().toISOString().split('T')[0],
+        startTime: '08:00',
+        endTime: '16:30',
+        pauseMinutes: 30,
+        type: 'normal'
+      },
+      {
+        id: 'demo-shift-2',
+        date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+        startTime: '22:00',
+        endTime: '06:00',
+        pauseMinutes: 0,
+        type: 'nacht'
+      }
+    ]
+  },
+  {
+    id: '2',
+    name: 'Max',
+    position: 'Saucier',
+    team: 'B',
+    hourlyRate: 16,
+    shifts: [
+      {
+        id: 'demo-shift-3',
+        date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+        startTime: '14:00',
+        endTime: '22:00',
+        pauseMinutes: 0,
+        type: 'normal'
+      }
+    ]
+  },
+  {
+    id: '3',
+    name: 'Anna',
+    position: 'Pizza',
+    team: 'B',
+    hourlyRate: 14,
+    shifts: []
+  }
+];
 
 // Load data from Supabase
 const loadFromServer = async (): Promise<{ employees: Employee[]; shifts: any[] } | null> => {
@@ -39,8 +94,10 @@ const loadFromServer = async (): Promise<{ employees: Employee[]; shifts: any[] 
   };
 };
 
-// Save data to Supabase
+// Save data to Supabase (only when NOT in demo mode)
 const saveToServer = async (employees: Employee[]) => {
+  if (useAuthStore.getState().isDemoMode) return;
+  
   const { data: { session } } = await supabase.auth.getSession();
   const user = session?.user;
   if (!user) return;
@@ -112,6 +169,12 @@ export const useStore = create<Store>()(
     employees: [],
     
     loadFromServer: async () => {
+      // In demo mode, use demo data instead
+      if (useAuthStore.getState().isDemoMode) {
+        set({ employees: DEMO_EMPLOYEES });
+        return;
+      }
+      
       const data = await loadFromServer();
       if (!data) return;
       
