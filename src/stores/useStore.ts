@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { supabase } from '../lib/supabase';
+import { syncToSupabase, loadFromSupabase, getEmployeesWithShifts, saveEmployee, saveShift, deleteEmployee as dbDeleteEmployee, type DBShift } from '../lib/db';
 import type { Employee, Shift, ActiveShift, DayStats, ShiftType } from '../types';
 import { useAuthStore } from './useAuthStore';
 
@@ -57,84 +57,9 @@ export const DEMO_EMPLOYEES: Employee[] = [
   }
 ];
 
-// Load data from Supabase
-const loadFromServer = async (): Promise<{ employees: Employee[]; shifts: any[] } | null> => {
-  const { data: { session } } = await supabase.auth.getSession();
-  const user = session?.user;
-  if (!user) return null;
-  
-  const { data: employees } = await supabase
-    .from('employees')
-    .select('*')
-    .eq('user_id', user.id);
-    
-  const { data: shifts } = await supabase
-    .from('shifts')
-    .select('*')
-    .eq('user_id', user.id);
-    
-  return {
-    employees: (employees || []).map((e: any) => ({
-      id: e.id,
-      name: e.name,
-      position: e.position,
-      team: e.team,
-      hourlyRate: e.hourly_rate,
-      shifts: []
-    })),
-    shifts: (shifts || []).map((s: any) => ({
-      id: s.id,
-      employee_id: s.employee_id,
-      date: s.date,
-      startTime: s.start_time,
-      endTime: s.end_time,
-      pauseMinutes: s.pause_minutes,
-      type: s.type
-    }))
-  };
-};
-
-// Save data to Supabase (only when NOT in demo mode)
-const saveToServer = async (employees: Employee[]) => {
-  if (useAuthStore.getState().isDemoMode) return;
-  
-  const { data: { session } } = await supabase.auth.getSession();
-  const user = session?.user;
-  if (!user) return;
-  
-  // Delete old
-  await supabase.from('shifts').delete().eq('user_id', user.id);
-  await supabase.from('employees').delete().eq('user_id', user.id);
-  
-  // Insert employees
-  if (employees.length > 0) {
-    const empData = employees.map(e => ({
-      id: e.id,
-      user_id: user.id,
-      name: e.name,
-      position: e.position,
-      team: e.team,
-      hourly_rate: e.hourlyRate
-    }));
-    await supabase.from('employees').insert(empData);
-  }
-  
-  // Insert shifts  
-  const allShifts = employees.flatMap(emp => 
-    emp.shifts.map(shift => ({
-      id: shift.id,
-      user_id: user.id,
-      employee_id: emp.id,
-      date: shift.date,
-      start_time: shift.startTime,
-      end_time: shift.endTime,
-      pause_minutes: shift.pauseMinutes,
-      type: shift.type
-    }))
-  );
-  if (allShifts.length > 0) {
-    await supabase.from('shifts').insert(allShifts);
-  }
+// Trigger sync to Supabase (fire and forget)
+const triggerSync = () => {
+  syncToSupabase().catch(console.error);
 };
 
 interface Store {
@@ -142,10 +67,14 @@ interface Store {
   currentEmployeeId: string | null;
   isPaused: boolean;
   employees: Employee[];
+  isLoading: boolean;
   
-  // Server sync methods
+  // Initialization
+  initialize: () => Promise<void>;
+  
+  // Server sync methods (Dexie-based)
+  syncToServer: () => Promise<void>;
   loadFromServer: () => Promise<void>;
-  saveToServer: () => Promise<void>;
   
   // Existing methods
   startShift: (employeeId: string) => void;
@@ -167,40 +96,99 @@ export const useStore = create<Store>()(
     currentEmployeeId: null,
     isPaused: false,
     employees: [],
+    isLoading: true,
     
-    loadFromServer: async () => {
-      // In demo mode, use demo data instead
+    initialize: async () => {
+      set({ isLoading: true });
+      
+      // In demo mode, use demo data
       if (useAuthStore.getState().isDemoMode) {
-        set({ employees: DEMO_EMPLOYEES });
+        set({ employees: DEMO_EMPLOYEES, isLoading: false });
         return;
       }
       
-      const data = await loadFromServer();
-      if (!data) return;
+      // Try to load from Dexie first
+      const localData = await getEmployeesWithShifts();
       
-      // Map shifts to their employees
-      const employeesWithShifts = data.employees.map(emp => {
-        const empShifts = data.shifts
-          .filter((s: any) => s.employee_id === emp.id)
-          .map((s: any) => ({
+      if (localData.length > 0) {
+        // Use local data
+        const employees: Employee[] = localData.map(e => ({
+          id: e.id,
+          name: e.name,
+          position: e.position,
+          team: e.team,
+          hourlyRate: e.hourlyRate,
+          shifts: e.shifts.map(s => ({
             id: s.id,
             date: s.date,
             startTime: s.startTime,
             endTime: s.endTime,
             pauseMinutes: s.pauseMinutes,
-            type: s.type,
-          }));
-        return {
-          ...emp,
-          shifts: empShifts,
-        };
-      });
-      set({ employees: employeesWithShifts });
+            type: s.type
+          }))
+        }));
+        set({ employees, isLoading: false });
+        
+        // Try to sync with server in background
+        triggerSync();
+      } else {
+        // No local data, try to load from Supabase
+        try {
+          await loadFromSupabase();
+          const refreshedData = await getEmployeesWithShifts();
+          if (refreshedData.length > 0) {
+            const employees: Employee[] = refreshedData.map(e => ({
+              id: e.id,
+              name: e.name,
+              position: e.position,
+              team: e.team,
+              hourlyRate: e.hourlyRate,
+              shifts: e.shifts.map(s => ({
+                id: s.id,
+                date: s.date,
+                startTime: s.startTime,
+                endTime: s.endTime,
+                pauseMinutes: s.pauseMinutes,
+                type: s.type
+              }))
+            }));
+            set({ employees });
+          }
+        } catch (e) {
+          console.error('Failed to load from Supabase:', e);
+        }
+        set({ isLoading: false });
+      }
     },
     
-    saveToServer: async () => {
-      const { employees } = get();
-      await saveToServer(employees);
+    syncToServer: async () => {
+      if (useAuthStore.getState().isDemoMode) return;
+      await syncToSupabase();
+    },
+    
+    loadFromServer: async () => {
+      if (useAuthStore.getState().isDemoMode) {
+        set({ employees: DEMO_EMPLOYEES });
+        return;
+      }
+      await loadFromSupabase();
+      const localData = await getEmployeesWithShifts();
+      const employees: Employee[] = localData.map(e => ({
+        id: e.id,
+        name: e.name,
+        position: e.position,
+        team: e.team,
+        hourlyRate: e.hourlyRate,
+        shifts: e.shifts.map(s => ({
+          id: s.id,
+          date: s.date,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          pauseMinutes: s.pauseMinutes,
+          type: s.type
+        }))
+      }));
+      set({ employees });
     },
     
     startShift: (employeeId: string) => set({
@@ -242,14 +230,31 @@ export const useStore = create<Store>()(
         type: shiftType,
       };
       
+      // Update local state
+      const updatedEmployees = employees.map((emp: Employee) => 
+        emp.id === currentEmployeeId 
+          ? { ...emp, shifts: [...emp.shifts, newShift] }
+          : emp
+      );
+      
+      // Save to Dexie
+      if (currentEmployeeId !== null) {
+        const shiftData: Omit<DBShift, 'isSynced'> = {
+          id: newShift.id,
+          employeeId: currentEmployeeId,
+          date: newShift.date,
+          startTime: newShift.startTime,
+          endTime: newShift.endTime || '',
+          pauseMinutes: newShift.pauseMinutes,
+          type: newShift.type
+        };
+        saveShift(shiftData).then(() => triggerSync());
+      }
+      
       set({
         activeShift: null,
         isPaused: false,
-        employees: employees.map((emp: Employee) => 
-          emp.id === currentEmployeeId 
-            ? { ...emp, shifts: [...emp.shifts, newShift] }
-            : emp
-        ),
+        employees: updatedEmployees,
       });
     },
     
@@ -292,12 +297,27 @@ export const useStore = create<Store>()(
     
     addEmployee: (employee: Omit<Employee, 'id' | 'shifts'>) => {
       const id = Date.now().toString();
+      const newEmployee: Employee = { ...employee, id, shifts: [] };
+      
+      // Save to Dexie
+      saveEmployee({
+        id,
+        name: employee.name,
+        position: employee.position,
+        team: employee.team,
+        hourlyRate: employee.hourlyRate,
+        shifts: []
+      }).then(() => triggerSync());
+      
       set((state: Store) => ({
-        employees: [...state.employees, { ...employee, id, shifts: [] }],
+        employees: [...state.employees, newEmployee],
       }));
     },
     
     removeEmployee: (id: string) => {
+      // Delete from Dexie
+      dbDeleteEmployee(id).then(() => triggerSync());
+      
       set((state: Store) => ({
         employees: state.employees.filter((e: Employee) => e.id !== id),
       }));
@@ -336,7 +356,8 @@ export const useStore = create<Store>()(
         
         // Calculate worked minutes correctly from start/end time
         const [startH, startM] = shift.startTime.split(':').map(Number);
-        let [endH, endM] = (shift.endTime || '00:00').split(':').map(Number);
+        const endTimeStr = shift.endTime ?? '00:00';
+        let [endH, endM] = endTimeStr.split(':').map(Number);
         
         let workedMinutes = (endH * 60 + endM) - (startH * 60 + startM) - shift.pauseMinutes;
         

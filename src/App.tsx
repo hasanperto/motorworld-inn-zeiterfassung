@@ -15,18 +15,18 @@ function App() {
     }
   }, [isAuthenticated, loadData]);
 
-  // Save data to server periodically when authenticated (skip in demo mode)
+  // Sync data to server periodically when authenticated (skip in demo mode)
   useEffect(() => {
     if (!isAuthenticated || isDemoMode) return;
 
-    const saveInterval = setInterval(() => {
-      useStore.getState().saveToServer();
-    }, 30000); // Save every 30 seconds
+    const syncInterval = setInterval(() => {
+      useStore.getState().syncToServer();
+    }, 30000); // Sync every 30 seconds
 
-    // Save on unmount
+    // Sync on unmount
     return () => {
-      clearInterval(saveInterval);
-      useStore.getState().saveToServer();
+      clearInterval(syncInterval);
+      useStore.getState().syncToServer();
     };
   }, [isAuthenticated, isDemoMode]);
 
