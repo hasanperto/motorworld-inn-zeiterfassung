@@ -1,6 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = 'https://zvctvmjdoqlnpvitgoss.supabase.co';
-const supabaseAnonKey = 'sb_publishable_EkXSPxN096zAEalH7ShU1Q_IfgcXEJl';
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Direct API calls instead of Supabase
+// API calls go through useAuthStore and useStore which use fetch against VPS backend
+export {};

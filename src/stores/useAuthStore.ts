@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase } from '../lib/supabase';
+
+const API_URL = 'https://api.webotonom.de';
 
 interface User {
-  id: string;
+  id: number;
   name: string;
   email: string;
 }
@@ -17,7 +18,6 @@ interface AuthStore {
   register: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   enterDemoMode: () => void;
-  exitDemoMode: () => void;
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -29,66 +29,41 @@ export const useAuthStore = create<AuthStore>()(
       isDemoMode: false,
       
       login: async (email: string, password: string) => {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password
+        const res = await fetch(`${API_URL}/api/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
         });
+        const data = await res.json();
         
-        if (error) return { success: false, error: error.message };
-        
-        set({ 
-          token: data.session?.access_token, 
-          user: { 
-            id: data.user?.id ?? '', 
-            name: data.user?.user_metadata?.name || '', 
-            email: data.user?.email || email 
-          }, 
-          isAuthenticated: true,
-          isDemoMode: false 
-        });
-        return { success: true };
+        if (res.ok) {
+          set({ token: data.token, user: data.user, isAuthenticated: true, isDemoMode: false });
+          return { success: true };
+        }
+        return { success: false, error: data.error };
       },
       
       register: async (name: string, email: string, password: string) => {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { name } }
+        const res = await fetch(`${API_URL}/api/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password }),
         });
+        const data = await res.json();
         
-        if (error) return { success: false, error: error.message };
-        
-        set({ 
-          token: data.session?.access_token, 
-          user: { 
-            id: data.user?.id ?? '', 
-            name, 
-            email 
-          }, 
-          isAuthenticated: true,
-          isDemoMode: false 
-        });
-        return { success: true };
+        if (res.ok) {
+          set({ token: data.token, user: data.user, isAuthenticated: true, isDemoMode: false });
+          return { success: true };
+        }
+        return { success: false, error: data.error };
       },
       
-      logout: async () => {
-        if (!useAuthStore.getState().isDemoMode) {
-          await supabase.auth.signOut();
-        }
+      logout: () => {
         set({ token: null, user: null, isAuthenticated: false, isDemoMode: false });
       },
       
       enterDemoMode: () => {
-        set({ 
-          isDemoMode: true, 
-          user: { id: 'demo', name: 'Demo Kullanici', email: 'demo@motorworldinn.de' },
-          isAuthenticated: true,
-          token: null
-        });
-      },
-      
-      exitDemoMode: () => {
-        set({ isDemoMode: false });
+        set({ isDemoMode: true, user: { id: 0, name: 'Demo', email: 'demo@webotonom.de' } });
       },
     }),
     { name: 'motorworld-auth' }

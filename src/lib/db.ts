@@ -1,4 +1,7 @@
 import Dexie, { type Table } from 'dexie';
+
+// API URL - VPS Backend
+export const API_URL = 'https://api.webotonom.de';
 import type { ShiftType } from '../types';
 
 export interface DBEmployee {
@@ -44,99 +47,88 @@ class MotorWorldDB extends Dexie {
 
 export const db = new MotorWorldDB();
 
-// Sync functions
-export async function syncToSupabase() {
-  const { supabase } = await import('./supabase');
-  
-  // Get unsynced employees
-  const unsyncedEmployees = await db.employees.where('isSynced').equals(0).toArray();
-  
-  for (const emp of unsyncedEmployees) {
-    const { error } = await supabase.from('employees').upsert({
+// Sync functions - VPS Backend
+import { useAuthStore } from '../stores/useAuthStore';
+
+export async function saveToServer(employees: any[]) {
+  const token = useAuthStore.getState().token;
+  if (!token) return;
+
+  const allShifts = employees.flatMap((emp: any) =>
+    (emp.shifts || []).map((s: any) => ({
+      id: s.id,
+      employee_id: emp.id,
+      date: s.date,
+      start_time: s.startTime,
+      end_time: s.endTime,
+      pause_minutes: s.pauseMinutes,
+      type: s.type
+    }))
+  );
+
+  const empData = employees.map((e: any) => ({
+    id: e.id,
+    name: e.name,
+    position: e.position,
+    team: e.team,
+    hourlyRate: e.hourlyRate
+  }));
+
+  const res = await fetch(`${API_URL}/api/data`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ employees: empData, shifts: allShifts })
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to save to server');
+  }
+}
+
+export async function loadFromServer() {
+  const token = useAuthStore.getState().token;
+  if (!token) return;
+
+  const res = await fetch(`${API_URL}/api/data`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  if (!res.ok) return;
+
+  const data = await res.json();
+
+  // Clear local DB
+  await db.employees.clear();
+  await db.shifts.clear();
+
+  // Insert employees
+  for (const emp of (data.employees || [])) {
+    await db.employees.add({
       id: emp.id,
       name: emp.name,
       position: emp.position,
       team: emp.team,
-      hourly_rate: emp.hourlyRate
+      hourlyRate: emp.hourly_rate,
+      shifts: [],
+      isSynced: true
     });
-    
-    if (!error) {
-      await db.employees.update(emp.id, { isSynced: true });
-    }
   }
-  
-  // Get unsynced shifts
-  const unsyncedShifts = await db.shifts.where('isSynced').equals(0).toArray();
-  
-  for (const shift of unsyncedShifts) {
-    const { error } = await supabase.from('shifts').upsert({
-      id: shift.id,
-      employee_id: shift.employeeId,
-      date: shift.date,
-      start_time: shift.startTime,
-      end_time: shift.endTime,
-      pause_minutes: shift.pauseMinutes,
-      type: shift.type
-    });
-    
-    if (!error) {
-      await db.shifts.update(shift.id, { isSynced: true });
-    }
-  }
-}
 
-export async function loadFromSupabase() {
-  const { supabase } = await import('./supabase');
-  
-  const { data: sessionData } = await supabase.auth.getSession();
-  const user = sessionData?.session?.user;
-  if (!user) return;
-
-  // Load employees
-  const { data: supaEmployees } = await supabase
-    .from('employees')
-    .select('*')
-    .eq('user_id', user.id);
-    
-  // Load shifts
-  const { data: supaShifts } = await supabase
-    .from('shifts')
-    .select('*')
-    .eq('user_id', user.id);
-  
-  // Clear local DB
-  await db.employees.clear();
-  await db.shifts.clear();
-  
-  // Insert employees
-  if (supaEmployees) {
-    for (const emp of supaEmployees) {
-      await db.employees.add({
-        id: emp.id,
-        name: emp.name,
-        position: emp.position,
-        team: emp.team,
-        hourlyRate: emp.hourly_rate,
-        shifts: [],
-        isSynced: true
-      });
-    }
-  }
-  
   // Insert shifts
-  if (supaShifts) {
-    for (const shift of supaShifts) {
-      await db.shifts.add({
-        id: shift.id,
-        employeeId: shift.employee_id,
-        date: shift.date,
-        startTime: shift.start_time,
-        endTime: shift.end_time,
-        pauseMinutes: shift.pause_minutes,
-        type: shift.type,
-        isSynced: true
-      });
-    }
+  for (const shift of (data.shifts || [])) {
+    await db.shifts.add({
+      id: shift.id,
+      employeeId: shift.employee_id,
+      date: shift.date,
+      startTime: shift.start_time,
+      endTime: shift.end_time,
+      pauseMinutes: shift.pause_minutes,
+      type: shift.type,
+      isSynced: true
+    });
   }
 }
 

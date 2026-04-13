@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { syncToSupabase, loadFromSupabase, getEmployeesWithShifts, saveEmployee, saveShift, deleteEmployee as dbDeleteEmployee, type DBShift } from '../lib/db';
+import { saveToServer, loadFromServer as loadFromVPS, getEmployeesWithShifts, saveEmployee, saveShift, deleteEmployee as dbDeleteEmployee, type DBShift } from '../lib/db';
 import type { Employee, Shift, ActiveShift, DayStats, ShiftType } from '../types';
 import { useAuthStore } from './useAuthStore';
 
@@ -57,9 +57,10 @@ export const DEMO_EMPLOYEES: Employee[] = [
   }
 ];
 
-// Trigger sync to Supabase (fire and forget)
+// Trigger sync to VPS (fire and forget)
 const triggerSync = () => {
-  syncToSupabase().catch(console.error);
+  const state = useStore.getState();
+  saveToServer(state.employees).catch(console.error);
 };
 
 interface Store {
@@ -132,9 +133,9 @@ export const useStore = create<Store>()(
         // Try to sync with server in background
         triggerSync();
       } else {
-        // No local data, try to load from Supabase
+        // No local data, try to load from VPS
         try {
-          await loadFromSupabase();
+          await loadFromVPS();
           const refreshedData = await getEmployeesWithShifts();
           if (refreshedData.length > 0) {
             const employees: Employee[] = refreshedData.map(e => ({
@@ -155,7 +156,7 @@ export const useStore = create<Store>()(
             set({ employees });
           }
         } catch (e) {
-          console.error('Failed to load from Supabase:', e);
+          console.error('Failed to load from VPS:', e);
         }
         set({ isLoading: false });
       }
@@ -163,7 +164,8 @@ export const useStore = create<Store>()(
     
     syncToServer: async () => {
       if (useAuthStore.getState().isDemoMode) return;
-      await syncToSupabase();
+      const state = useStore.getState();
+      await saveToServer(state.employees);
     },
     
     loadFromServer: async () => {
@@ -171,7 +173,7 @@ export const useStore = create<Store>()(
         set({ employees: DEMO_EMPLOYEES });
         return;
       }
-      await loadFromSupabase();
+      await loadFromVPS();
       const localData = await getEmployeesWithShifts();
       const employees: Employee[] = localData.map(e => ({
         id: e.id,

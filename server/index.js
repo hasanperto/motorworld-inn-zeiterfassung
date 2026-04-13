@@ -1,126 +1,128 @@
 import express from 'express';
 import cors from 'cors';
-import { createClient } from '@supabase/supabase-js';
+import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const db = new Database(join(__dirname, 'motorworld.db'));
 const app = express();
+
+const JWT_SECRET = process.env.JWT_SECRET || 'motorworld-secret-2024';
+const PORT = process.env.PORT || 3001;
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-const SUPABASE_URL = 'https://zvctvmjdoqlnpvitgoss.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_EkXSPxN096zAEalH7ShU1Q_IfgcXEJl';
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// Auth middleware - JWT verify via Supabase
-const auth = async (req, res, next) => {
+// Auth middleware
+const auth = (req, res, next) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return res.status(401).json({ error: 'Unauthorized' });
-  
-  req.userId = user.id;
-  req.userEmail = user.email;
-  next();
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid token' });
+  }
 };
 
-// REGISTER - Create auth user + profile
-app.post('/api/register', async (req, res) => {
+// Database setup
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE TABLE IF NOT EXISTS employees (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    position TEXT,
+    team TEXT,
+    hourly_rate REAL DEFAULT 15,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+  
+  CREATE TABLE IF NOT EXISTS shifts (
+    id TEXT PRIMARY KEY,
+    employee_id TEXT,
+    user_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT,
+    pause_minutes INTEGER DEFAULT 0,
+    type TEXT DEFAULT 'normal',
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+`);
+
+// Auth routes
+app.post('/api/register', (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'All fields required' });
   }
   
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { data: { name } }
-  });
-  
-  if (error) return res.status(400).json({ error: error.message });
-  
-  res.json({ 
-    token: data.session?.access_token, 
-    user: { id: data.user?.id, name, email },
-    message: 'Registration successful!'
-  });
+  try {
+    const hashed = bcrypt.hashSync(password, 10);
+    const stmt = db.prepare('INSERT INTO users (name, email, password) VALUES (?, ?, ?)');
+    const result = stmt.run(name, email, hashed);
+    const token = jwt.sign({ userId: result.lastInsertRowid }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, user: { id: result.lastInsertRowid, name, email } });
+  } catch (err) {
+    if (err.message.includes('UNIQUE')) {
+      res.status(400).json({ error: 'Email already exists' });
+    } else {
+      res.status(500).json({ error: err.message });
+    }
+  }
 });
 
-// LOGIN
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', (req, res) => {
   const { email, password } = req.body;
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password
-  });
-  
-  if (error) return res.status(401).json({ error: 'Invalid credentials' });
-  
-  res.json({ 
-    token: data.session?.access_token, 
-    user: { id: data.user?.id, name: data.user?.user_metadata?.name, email: data.user?.email }
-  });
-});
-
-// LOGOUT
-app.post('/api/logout', auth, async (req, res) => {
-  await supabase.auth.signOut();
-  res.json({ success: true });
-});
-
-// GET DATA
-app.get('/api/data', auth, async (req, res) => {
-  const { data: employees, error: empError } = await supabase
-    .from('employees')
-    .select('*')
-    .eq('user_id', req.userId);
-  
-  const { data: shifts, error: shiftError } = await supabase
-    .from('shifts')
-    .select('*')
-    .eq('user_id', req.userId);
-  
-  if (empError || shiftError) {
-    return res.status(500).json({ error: 'Failed to fetch data' });
+  if (!user || !bcrypt.compareSync(password, user.password)) {
+    return res.status(401).json({ error: 'Invalid credentials' });
   }
   
-  res.json({ employees: employees || [], shifts: shifts || [] });
+  const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '30d' });
+  res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
 });
 
-// SAVE DATA
-app.post('/api/data', auth, async (req, res) => {
+// Data routes
+app.get('/api/data', auth, (req, res) => {
+  const employees = db.prepare('SELECT * FROM employees WHERE user_id = ?').all(req.userId);
+  const shifts = db.prepare('SELECT * FROM shifts WHERE user_id = ?').all(req.userId);
+  res.json({ employees, shifts });
+});
+
+app.post('/api/data', auth, (req, res) => {
   const { employees, shifts } = req.body;
   
-  // Delete old data
-  await supabase.from('shifts').delete().eq('user_id', req.userId);
-  await supabase.from('employees').delete().eq('user_id', req.userId);
+  db.prepare('DELETE FROM shifts WHERE user_id = ?').run(req.userId);
+  db.prepare('DELETE FROM employees WHERE user_id = ?').run(req.userId);
   
-  // Insert employees
-  if (employees?.length > 0) {
-    const empData = employees.map(emp => ({ ...emp, user_id: req.userId }));
-    const { error: empError } = await supabase.from('employees').insert(empData);
-    if (empError) return res.status(500).json({ error: empError.message });
-  }
+  const insertEmp = db.prepare('INSERT INTO employees (id, user_id, name, position, team, hourly_rate) VALUES (?, ?, ?, ?, ?, ?)');
+  employees?.forEach(emp => {
+    insertEmp.run(emp.id, req.userId, emp.name, emp.position, emp.team, emp.hourlyRate);
+  });
   
-  // Insert shifts
-  if (shifts?.length > 0) {
-    const shiftData = shifts.map(s => ({ ...s, user_id: req.userId }));
-    const { error: shiftError } = await supabase.from('shifts').insert(shiftData);
-    if (shiftError) return res.status(500).json({ error: shiftError.message });
-  }
+  const insertShift = db.prepare('INSERT INTO shifts (id, employee_id, user_id, date, start_time, end_time, pause_minutes, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  shifts?.forEach(shift => {
+    insertShift.run(shift.id, shift.employee_id, req.userId, shift.date, shift.start_time, shift.end_time, shift.pause_minutes, shift.type);
+  });
   
   res.json({ success: true });
 });
 
-// USER INFO
-app.get('/api/me', auth, async (req, res) => {
-  const { data: { user } } = await supabase.auth.getUser();
-  res.json({ 
-    id: user?.id, 
-    email: user?.email,
-    name: user?.user_metadata?.name 
-  });
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`MotorWorld API running on port ${PORT}`);
 });
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
