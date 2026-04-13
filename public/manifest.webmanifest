@@ -1,0 +1,17 @@
+{
+  "name": "MotorWorld Inn - Zeiterfassung",
+  "short_name": "Zeiterfassung",
+  "description": "Personel Zaman ve Kazanç Takip",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f23",
+  "theme_color": "#0f0f23",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
