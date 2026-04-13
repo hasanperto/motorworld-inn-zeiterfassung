@@ -5,30 +5,30 @@ import AuthPage from './pages/Auth';
 import SchichtApp from './components/SchichtApp';
 
 function App() {
-  const { isAuthenticated, token } = useAuthStore();
+  const { isAuthenticated } = useAuthStore();
   const loadData = useStore((state) => state.loadFromServer);
 
   // Load data from server when authenticated
   useEffect(() => {
-    if (isAuthenticated && token) {
-      loadData(token);
+    if (isAuthenticated) {
+      loadData();
     }
-  }, [isAuthenticated, token, loadData]);
+  }, [isAuthenticated, loadData]);
 
   // Save data to server periodically when authenticated
   useEffect(() => {
-    if (!isAuthenticated || !token) return;
+    if (!isAuthenticated) return;
 
     const saveInterval = setInterval(() => {
-      useStore.getState().saveToServer(token);
+      useStore.getState().saveToServer();
     }, 30000); // Save every 30 seconds
 
     // Save on unmount
     return () => {
       clearInterval(saveInterval);
-      useStore.getState().saveToServer(token);
+      useStore.getState().saveToServer();
     };
-  }, [isAuthenticated, token]);
+  }, [isAuthenticated]);
 
   if (!isAuthenticated) {
     return <AuthPage />;

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { supabase } from '../lib/supabase';
 
 interface User {
   id: string;
@@ -24,47 +25,48 @@ export const useAuthStore = create<AuthStore>()(
       isAuthenticated: false,
       
       login: async (email: string, password: string) => {
-        try {
-          const res = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
-          });
-          const data = await res.json();
-          
-          if (res.ok) {
-            set({ token: data.token, user: data.user, isAuthenticated: true });
-            return { success: true };
-          }
-          return { success: false, error: data.error || 'Login failed' };
-        } catch (err) {
-          return { success: false, error: 'Network error' };
-        }
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password
+        });
+        
+        if (error) return { success: false, error: error.message };
+        
+        set({ 
+          token: data.session?.access_token, 
+          user: { 
+            id: data.user?.id ?? '', 
+            name: data.user?.user_metadata?.name || '', 
+            email: data.user?.email || email 
+          }, 
+          isAuthenticated: true 
+        });
+        return { success: true };
       },
       
       register: async (name: string, email: string, password: string) => {
-        try {
-          const res = await fetch('/api/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, email, password }),
-          });
-          const data = await res.json();
-          
-          if (res.ok) {
-            set({ token: data.token, user: data.user, isAuthenticated: true });
-            return { success: true };
-          }
-          return { success: false, error: data.error || 'Registration failed' };
-        } catch (err) {
-          return { success: false, error: 'Network error' };
-        }
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { name } }
+        });
+        
+        if (error) return { success: false, error: error.message };
+        
+        set({ 
+          token: data.session?.access_token, 
+          user: { 
+            id: data.user?.id ?? '', 
+            name, 
+            email 
+          }, 
+          isAuthenticated: true 
+        });
+        return { success: true };
       },
       
       logout: async () => {
-        try {
-          await fetch('/api/logout', { method: 'POST' });
-        } catch {}
+        await supabase.auth.signOut();
         set({ token: null, user: null, isAuthenticated: false });
       },
     }),

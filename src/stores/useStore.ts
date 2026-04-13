@@ -1,4 +1,84 @@
 import { create } from 'zustand';
+import { supabase } from '../lib/supabase';
+import type { Employee, Shift, ActiveShift, DayStats, ShiftType } from '../types';
+
+// Load data from Supabase
+const loadFromServer = async (): Promise<{ employees: Employee[]; shifts: any[] } | null> => {
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) return null;
+  
+  const { data: employees } = await supabase
+    .from('employees')
+    .select('*')
+    .eq('user_id', user.id);
+    
+  const { data: shifts } = await supabase
+    .from('shifts')
+    .select('*')
+    .eq('user_id', user.id);
+    
+  return {
+    employees: (employees || []).map((e: any) => ({
+      id: e.id,
+      name: e.name,
+      position: e.position,
+      team: e.team,
+      hourlyRate: e.hourly_rate,
+      shifts: []
+    })),
+    shifts: (shifts || []).map((s: any) => ({
+      id: s.id,
+      employee_id: s.employee_id,
+      date: s.date,
+      startTime: s.start_time,
+      endTime: s.end_time,
+      pauseMinutes: s.pause_minutes,
+      type: s.type
+    }))
+  };
+};
+
+// Save data to Supabase
+const saveToServer = async (employees: Employee[]) => {
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) return;
+  
+  // Delete old
+  await supabase.from('shifts').delete().eq('user_id', user.id);
+  await supabase.from('employees').delete().eq('user_id', user.id);
+  
+  // Insert employees
+  if (employees.length > 0) {
+    const empData = employees.map(e => ({
+      id: e.id,
+      user_id: user.id,
+      name: e.name,
+      position: e.position,
+      team: e.team,
+      hourly_rate: e.hourlyRate
+    }));
+    await supabase.from('employees').insert(empData);
+  }
+  
+  // Insert shifts  
+  const allShifts = employees.flatMap(emp => 
+    emp.shifts.map(shift => ({
+      id: shift.id,
+      user_id: user.id,
+      employee_id: emp.id,
+      date: shift.date,
+      start_time: shift.startTime,
+      end_time: shift.endTime,
+      pause_minutes: shift.pauseMinutes,
+      type: shift.type
+    }))
+  );
+  if (allShifts.length > 0) {
+    await supabase.from('shifts').insert(allShifts);
+  }
+};
 
 interface Store {
   activeShift: ActiveShift | null;
@@ -7,8 +87,8 @@ interface Store {
   employees: Employee[];
   
   // Server sync methods
-  loadFromServer: (token: string) => Promise<void>;
-  saveToServer: (token: string) => Promise<void>;
+  loadFromServer: () => Promise<void>;
+  saveToServer: () => Promise<void>;
   
   // Existing methods
   startShift: (employeeId: string) => void;
@@ -31,66 +111,33 @@ export const useStore = create<Store>()(
     isPaused: false,
     employees: [],
     
-    loadFromServer: async (token: string) => {
-      try {
-        const res = await fetch('/api/data', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          // Map server employees to include shifts
-          const employeesWithShifts = data.employees.map((emp: any) => {
-            const empShifts = data.shifts
-              .filter((s: any) => s.employee_id === emp.id)
-              .map((s: any) => ({
-                id: s.id,
-                date: s.date,
-                startTime: s.startTime,
-                endTime: s.endTime,
-                pauseMinutes: s.pauseMinutes,
-                type: s.type,
-              }));
-            return {
-              id: emp.id,
-              name: emp.name,
-              position: emp.position,
-              team: emp.team,
-              hourlyRate: emp.hourlyRate,
-              shifts: empShifts,
-            };
-          });
-          set({ employees: employeesWithShifts });
-        }
-      } catch (err) {
-        console.error('Failed to load data:', err);
-      }
+    loadFromServer: async () => {
+      const data = await loadFromServer();
+      if (!data) return;
+      
+      // Map shifts to their employees
+      const employeesWithShifts = data.employees.map(emp => {
+        const empShifts = data.shifts
+          .filter((s: any) => s.employee_id === emp.id)
+          .map((s: any) => ({
+            id: s.id,
+            date: s.date,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            pauseMinutes: s.pauseMinutes,
+            type: s.type,
+          }));
+        return {
+          ...emp,
+          shifts: empShifts,
+        };
+      });
+      set({ employees: employeesWithShifts });
     },
     
-    saveToServer: async (token: string) => {
-      try {
-        const { employees } = get();
-        // Flatten employees and shifts for server
-        const flatEmployees = employees.map(({ id, name, position, team, hourlyRate }) => ({
-          id, name, position, team, hourlyRate
-        }));
-        const allShifts = employees.flatMap(emp => 
-          emp.shifts.map(shift => ({
-            ...shift,
-            employeeId: emp.id,
-          }))
-        );
-        
-        await fetch('/api/data', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ employees: flatEmployees, shifts: allShifts }),
-        });
-      } catch (err) {
-        console.error('Failed to save data:', err);
-      }
+    saveToServer: async () => {
+      const { employees } = get();
+      await saveToServer(employees);
     },
     
     startShift: (employeeId: string) => set({
@@ -266,39 +313,3 @@ export const useStore = create<Store>()(
     },
   })
 );
-
-export type ShiftType = 'normal' | 'nacht' | 'sonntag' | 'nacht+sonntag';
-
-export interface Shift {
-  id: string;
-  date: string; // YYYY-MM-DD
-  startTime: string; // HH:mm
-  endTime: string | null; // HH:mm or null if active
-  pauseMinutes: number;
-  type: ShiftType;
-}
-
-export interface Employee {
-  id: string;
-  name: string;
-  position: string;
-  team: string;
-  hourlyRate: number;
-  shifts: Shift[];
-}
-
-export interface ActiveShift {
-  startTime: Date;
-  pauseStartTime: Date | null;
-  totalPauseMs: number;
-  alarmTime: Date | null;
-}
-
-export interface DayStats {
-  date: string;
-  totalMinutes: number;
-  normalMinutes: number;
-  nachtMinutes: number;
-  sonntagMinutes: number;
-  earnings: number;
-}
