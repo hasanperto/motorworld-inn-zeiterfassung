@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useStore } from './stores/useStore';
-import type { Employee, Shift, ShiftType } from './types';
+import type { ShiftType } from './types';
+import Verlauf from './components/Verlauf';
+import Uebersicht from './components/Uebersicht';
+import Mitarbeiter from './components/Mitarbeiter';
+
+type Tab = 'schicht' | 'verlauf' | 'uebersicht' | 'mitarbeiter';
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -37,6 +42,7 @@ function getShiftTypeColor(type: ShiftType): string {
 }
 
 export default function App() {
+  const [currentTab, setCurrentTab] = useState<Tab>('schicht');
   const [currentTime, setCurrentTime] = useState(new Date());
   const {
     activeShift,
@@ -56,10 +62,9 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  const currentEmployee = employees.find((e: Employee) => e.id === currentEmployeeId);
+  const currentEmployee = employees.find(e => e.id === currentEmployeeId);
   const todayShifts = currentEmployeeId ? getTodayShifts(currentEmployeeId) : [];
   
-  // Calculate current shift duration
   const getActiveDuration = () => {
     if (!activeShift) return 0;
     let totalMs = Date.now() - activeShift.startTime.getTime() - activeShift.totalPauseMs;
@@ -108,12 +113,155 @@ export default function App() {
     const alarmTime = new Date();
     alarmTime.setHours(parseInt(hours), parseInt(mins || '0'), 0, 0);
     
-    // If time has passed, set for tomorrow
     if (alarmTime <= new Date()) {
       alarmTime.setDate(alarmTime.getDate() + 1);
     }
     
     setAlarm(alarmTime);
+  };
+
+  // Render active tab content
+  const renderContent = () => {
+    switch (currentTab) {
+      case 'schicht':
+        return (
+          <div className="p-4 flex flex-col gap-4 flex-1 max-w-md mx-auto w-full">
+            {/* Employee Selector */}
+            <div className="bg-secondary rounded-xl p-4">
+              <label className="text-xs text-gray-400 mb-2 block">Mitarbeiter</label>
+              <select
+                value={currentEmployeeId || ''}
+                onChange={(e) => setCurrentEmployee(e.target.value || null)}
+                className="w-full bg-primary text-text rounded-lg p-3 border border-border focus:border-accent outline-none"
+              >
+                <option value="">-- Auswählen --</option>
+                {employees.map(emp => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.name} ({emp.position})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Clock Display */}
+            <div className="bg-secondary rounded-xl p-6 text-center">
+              <div className={`text-5xl font-mono font-bold mb-2 ${currentEmployee ? 'text-success' : 'text-text'}`}>
+                {formatTime(currentTime)}
+              </div>
+              <div className="text-gray-400 capitalize">
+                {formatDate(currentTime)}
+              </div>
+              {activeShift && (
+                <div className={`mt-2 text-sm ${getShiftTypeColor(getShiftType(currentTime.getHours(), currentTime.getDay() === 0))}`}>
+                  {getShiftTypeLabel(getShiftType(currentTime.getHours(), currentTime.getDay() === 0))}
+                </div>
+              )}
+            </div>
+
+            {/* Control Buttons */}
+            <div className="flex flex-col gap-3">
+              {!activeShift ? (
+                <button
+                  onClick={handleStartShift}
+                  disabled={!currentEmployeeId}
+                  className="bg-success hover:bg-green-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl text-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  <span className="text-2xl">▶</span>
+                  SCHICHT STARTEN
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={handleEndShift}
+                    className="bg-accent hover:bg-red-600 text-white font-bold py-4 px-6 rounded-xl text-lg transition-colors flex items-center justify-center gap-2"
+                  >
+                    <span className="text-2xl">■</span>
+                    SCHICHT ENDE
+                  </button>
+                  
+                  <button
+                    onClick={togglePause}
+                    className={`font-bold py-3 px-6 rounded-xl text-lg transition-colors flex items-center justify-center gap-2 ${
+                      isPaused 
+                        ? 'bg-warning text-black' 
+                        : 'bg-gray-700 text-white'
+                    }`}
+                  >
+                    <span className="text-xl">{isPaused ? '▶' : '⏸'}</span>
+                    {isPaused ? 'FORTSETZEN' : 'PAUSE'}
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Alarm */}
+            {activeShift && (
+              <button
+                onClick={handleSetAlarm}
+                className="bg-primary border border-border text-text py-3 px-6 rounded-xl text-sm flex items-center justify-center gap-2 hover:border-accent transition-colors"
+              >
+                <span>⏰</span>
+                ALARM SETZEN
+              </button>
+            )}
+
+            {/* Active Shift Info */}
+            {activeShift && (
+              <div className="bg-secondary rounded-xl p-4">
+                <div className="flex justify-between items-center mb-4">
+                  <div>
+                    <div className="text-xs text-gray-400">Gestartet um</div>
+                    <div className="text-lg font-mono">{formatTime(activeShift.startTime)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-gray-400">Pause</div>
+                    <div className="text-lg font-mono">
+                      {formatDuration(Math.floor(activeShift.totalPauseMs / 1000))}
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="border-t border-border pt-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Aktive Dauer</span>
+                    <span className={`text-3xl font-mono font-bold ${isPaused ? 'text-yellow-400' : 'text-success'}`}>
+                      {formatDuration(elapsedSeconds)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Today's Summary */}
+            {todayShifts.length > 0 && (
+              <div className="bg-secondary rounded-xl p-4">
+                <h3 className="text-sm text-gray-400 mb-3">Heute ({todayShifts.length} Schicht)</h3>
+                {todayShifts.map((shift) => (
+                  <div key={shift.id} className="flex justify-between items-center py-2 border-b border-border last:border-0">
+                    <div>
+                      <span className="font-mono">{shift.startTime}</span>
+                      <span className="text-gray-500 mx-2">→</span>
+                      <span className="font-mono">{shift.endTime || '--:--'}</span>
+                    </div>
+                    <div className={`text-sm ${getShiftTypeColor(shift.type)}`}>
+                      {getShiftTypeLabel(shift.type)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      
+      case 'verlauf':
+        return <Verlauf />;
+      
+      case 'uebersicht':
+        return <Uebersicht />;
+      
+      case 'mitarbeiter':
+        return <Mitarbeiter />;
+    }
   };
 
   return (
@@ -125,149 +273,48 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 flex flex-col gap-4 max-w-md mx-auto w-full">
-        
-        {/* Employee Selector */}
-        <div className="bg-secondary rounded-xl p-4">
-          <label className="text-xs text-gray-400 mb-2 block">Mitarbeiter</label>
-          <select
-            value={currentEmployeeId || ''}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCurrentEmployee(e.target.value || null)}
-            className="w-full bg-primary text-text rounded-lg p-3 border border-border focus:border-accent outline-none"
-          >
-            <option value="">-- Auswählen --</option>
-            {employees.map((emp: Employee) => (
-              <option key={emp.id} value={emp.id}>
-                {emp.name} ({emp.position})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Clock Display */}
-        <div className="bg-secondary rounded-xl p-6 text-center">
-          <div className={`text-5xl font-mono font-bold mb-2 ${currentEmployee ? 'text-success' : 'text-text'}`}>
-            {formatTime(currentTime)}
-          </div>
-          <div className="text-gray-400 capitalize">
-            {formatDate(currentTime)}
-          </div>
-          {activeShift && (
-            <div className={`mt-2 text-sm ${getShiftTypeColor(getShiftType(currentTime.getHours(), currentTime.getDay() === 0))}`}>
-              {getShiftTypeLabel(getShiftType(currentTime.getHours(), currentTime.getDay() === 0))}
-            </div>
-          )}
-        </div>
-
-        {/* Control Buttons */}
-        <div className="flex flex-col gap-3">
-          {!activeShift ? (
-            <button
-              onClick={handleStartShift}
-              disabled={!currentEmployeeId}
-              className="bg-success hover:bg-green-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl text-lg transition-colors flex items-center justify-center gap-2"
-            >
-              <span className="text-2xl">▶</span>
-              SCHICHT STARTEN
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={handleEndShift}
-                className="bg-accent hover:bg-red-600 text-white font-bold py-4 px-6 rounded-xl text-lg transition-colors flex items-center justify-center gap-2"
-              >
-                <span className="text-2xl">■</span>
-                SCHICHT ENDE
-              </button>
-              
-              {/* Pause Button */}
-              <button
-                onClick={togglePause}
-                className={`font-bold py-3 px-6 rounded-xl text-lg transition-colors flex items-center justify-center gap-2 ${
-                  isPaused 
-                    ? 'bg-warning text-black' 
-                    : 'bg-gray-700 text-white'
-                }`}
-              >
-                <span className="text-xl">{isPaused ? '▶' : '⏸'}</span>
-                {isPaused ? 'FORTSETZEN' : 'PAUSE'}
-              </button>
-            </>
-          )}
-        </div>
-
-        {/* Alarm */}
-        {activeShift && (
-          <button
-            onClick={handleSetAlarm}
-            className="bg-primary border border-border text-text py-3 px-6 rounded-xl text-sm flex items-center justify-center gap-2 hover:border-accent transition-colors"
-          >
-            <span>⏰</span>
-            ALARM SETZEN
-          </button>
-        )}
-
-        {/* Active Shift Info */}
-        {activeShift && (
-          <div className="bg-secondary rounded-xl p-4">
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <div className="text-xs text-gray-400">Gestartet um</div>
-                <div className="text-lg font-mono">{formatTime(activeShift.startTime)}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-gray-400">Pause</div>
-                <div className="text-lg font-mono">
-                  {formatDuration(Math.floor(activeShift.totalPauseMs / 1000))}
-                </div>
-              </div>
-            </div>
-            
-            <div className="border-t border-border pt-4">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Aktive Dauer</span>
-                <span className={`text-3xl font-mono font-bold ${isPaused ? 'text-yellow-400' : 'text-success'}`}>
-                  {formatDuration(elapsedSeconds)}
-                </span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Today's Summary */}
-        {todayShifts.length > 0 && (
-          <div className="bg-secondary rounded-xl p-4">
-            <h3 className="text-sm text-gray-400 mb-3">Heute ({todayShifts.length} Schicht)</h3>
-            {todayShifts.map((shift: Shift) => (
-              <div key={shift.id} className="flex justify-between items-center py-2 border-b border-border last:border-0">
-                <div>
-                  <span className="font-mono">{shift.startTime}</span>
-                  <span className="text-gray-500 mx-2">→</span>
-                  <span className="font-mono">{shift.endTime || '--:--'}</span>
-                </div>
-                <div className={`text-sm ${getShiftTypeColor(shift.type)}`}>
-                  {getShiftTypeLabel(shift.type)}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+      <main className="flex-1 overflow-y-auto pb-20">
+        {renderContent()}
       </main>
 
       {/* Footer Navigation */}
-      <footer className="bg-primary border-t border-border p-2">
+      <footer className="bg-primary border-t border-border p-2 fixed bottom-0 left-0 right-0">
         <nav className="flex justify-around max-w-md mx-auto">
-          <button className="flex flex-col items-center p-2 text-accent">
+          <button 
+            className={`flex flex-col items-center p-2 transition-colors ${
+              currentTab === 'schicht' ? 'text-accent' : 'text-gray-500'
+            }`}
+            onClick={() => setCurrentTab('schicht')}
+          >
             <span className="text-xl">⏱</span>
             <span className="text-xs">Schicht</span>
           </button>
-          <button className="flex flex-col items-center p-2 text-gray-500">
+          <button 
+            className={`flex flex-col items-center p-2 transition-colors ${
+              currentTab === 'verlauf' ? 'text-accent' : 'text-gray-500'
+            }`}
+            onClick={() => setCurrentTab('verlauf')}
+          >
             <span className="text-xl">📋</span>
             <span className="text-xs">Verlauf</span>
           </button>
-          <button className="flex flex-col items-center p-2 text-gray-500">
+          <button 
+            className={`flex flex-col items-center p-2 transition-colors ${
+              currentTab === 'uebersicht' ? 'text-accent' : 'text-gray-500'
+            }`}
+            onClick={() => setCurrentTab('uebersicht')}
+          >
             <span className="text-xl">📊</span>
             <span className="text-xs">Übersicht</span>
+          </button>
+          <button 
+            className={`flex flex-col items-center p-2 transition-colors ${
+              currentTab === 'mitarbeiter' ? 'text-accent' : 'text-gray-500'
+            }`}
+            onClick={() => setCurrentTab('mitarbeiter')}
+          >
+            <span className="text-xl">👥</span>
+            <span className="text-xs">Team</span>
           </button>
         </nav>
       </footer>
